@@ -1,10 +1,10 @@
 // One-shot: copy data from local SQLite (lafefa.db) into Supabase/Postgres.
 // Usage: npm run migrate
 //
-// Requires:
-//   - lafefa.db existing in project root
-//   - DATABASE_URL set in .env (Supabase pooler URI, port 6543)
-//   - supabase/schema.sql already executed in Supabase
+// Handles legacy data quirks:
+//   - orphan FK refs (holder/aniversariante/convidado IDs that no longer exist) → NULL
+//   - legacy tipo values ('convidados' → 'convidado', 'aniversarios' → 'aniversariante')
+//   - listas that become invalid after normalization → skipped (with their convidados)
 
 try { require('dotenv').config(); } catch (_) {}
 
@@ -28,53 +28,83 @@ const sqliteAll = (sql) => new Promise((resolve, reject) => {
   sdb.all(sql, (err, rows) => err ? reject(err) : resolve(rows || []));
 });
 
-async function copyTable(name, columns, rows, conflictKey = 'id') {
+async function copyRows(name, columns, rows) {
   if (rows.length === 0) {
-    console.log(`  ${name}: 0 rows (skipped)`);
+    console.log(`  ${name}: 0 rows`);
     return;
   }
-  const cols = columns.join(', ');
-  let inserted = 0;
   for (const row of rows) {
     const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
     const values = columns.map((c) => row[c] === undefined ? null : row[c]);
     await pg.query(
-      `INSERT INTO ${name} (${cols}) VALUES (${placeholders}) ON CONFLICT (${conflictKey}) DO NOTHING`,
+      `INSERT INTO ${name} (${columns.join(', ')}) VALUES (${placeholders}) ON CONFLICT (id) DO NOTHING`,
       values
     );
-    inserted++;
   }
-  console.log(`  ${name}: ${inserted} rows`);
-
-  // Bump the sequence so future inserts don't collide with copied IDs
+  console.log(`  ${name}: ${rows.length} rows`);
   await pg.query(`
-    SELECT setval(
-      pg_get_serial_sequence('${name}', 'id'),
-      COALESCE((SELECT MAX(id) FROM ${name}), 1),
-      true
-    )
+    SELECT setval(pg_get_serial_sequence('${name}', 'id'),
+                  COALESCE((SELECT MAX(id) FROM ${name}), 1), true)
   `);
+}
+
+function normalizeTipo(t) {
+  if (t === 'convidados') return 'convidado';
+  if (t === 'aniversarios') return 'aniversariante';
+  return t;
 }
 
 (async () => {
   try {
     console.log('→ Reading from SQLite...');
     const holders = await sqliteAll('SELECT id, name, instagram, telefone, created_at FROM holders');
-    const aniversariantes = await sqliteAll('SELECT id, nome, instagram, telefone, data_evento, created_at FROM aniversariantes');
+    const anis = await sqliteAll('SELECT id, nome, instagram, telefone, data_evento, created_at FROM aniversariantes');
     const restritas = await sqliteAll('SELECT id, nome, motivo, criado_em FROM pessoas_restritas');
     const convFreq = await sqliteAll('SELECT id, nome, instagram, telefone, created_at FROM convidados_frequentes');
-    const listas = await sqliteAll('SELECT id, holder_id, aniversariante_id, convidado_id, data, tipo, dia_semana, created_at FROM listas');
-    const convidados = await sqliteAll('SELECT id, lista_id, nome, instagram, telefone, quem_convida, chegou, added_at FROM convidados');
+    const listasRaw = await sqliteAll('SELECT id, holder_id, aniversariante_id, convidado_id, data, tipo, dia_semana, created_at FROM listas');
+    const convidadosRaw = await sqliteAll('SELECT id, lista_id, nome, instagram, telefone, quem_convida, chegou, added_at FROM convidados');
+
+    const validHolderIds = new Set(holders.map((h) => h.id));
+    const validAniIds = new Set(anis.map((a) => a.id));
+    const validCfIds = new Set(convFreq.map((c) => c.id));
+
+    let skippedListas = 0;
+    const listas = listasRaw
+      .map((l) => {
+        const tipo = normalizeTipo(l.tipo);
+        const holder_id = validHolderIds.has(l.holder_id) ? l.holder_id : null;
+        const aniversariante_id = validAniIds.has(l.aniversariante_id) ? l.aniversariante_id : null;
+        const convidado_id = validCfIds.has(l.convidado_id) ? l.convidado_id : null;
+        return { ...l, tipo, holder_id, aniversariante_id, convidado_id };
+      })
+      .filter((l) => {
+        const ok =
+          (l.tipo === 'holder' && l.holder_id) ||
+          (l.tipo === 'aniversariante' && l.aniversariante_id) ||
+          (l.tipo === 'convidado');
+        if (!ok) skippedListas++;
+        return ok;
+      });
+
+    const validListaIds = new Set(listas.map((l) => l.id));
+    let skippedConvidados = 0;
+    const convidados = convidadosRaw
+      .filter((c) => {
+        const ok = validListaIds.has(c.lista_id);
+        if (!ok) skippedConvidados++;
+        return ok;
+      })
+      .map((c) => ({ ...c, chegou: !!c.chegou }));
+
+    console.log(`→ Skipping ${skippedListas} orphan listas and ${skippedConvidados} of their convidados.`);
 
     console.log('→ Writing to Postgres (Supabase)...');
-    await copyTable('holders', ['id', 'name', 'instagram', 'telefone', 'created_at'], holders);
-    await copyTable('aniversariantes', ['id', 'nome', 'instagram', 'telefone', 'data_evento', 'created_at'], aniversariantes);
-    await copyTable('pessoas_restritas', ['id', 'nome', 'motivo', 'criado_em'], restritas);
-    await copyTable('convidados_frequentes', ['id', 'nome', 'instagram', 'telefone', 'created_at'], convFreq);
-    await copyTable('listas', ['id', 'holder_id', 'aniversariante_id', 'convidado_id', 'data', 'tipo', 'dia_semana', 'created_at'], listas);
-    // SQLite stores chegou as 0/1 — Postgres expects boolean
-    const convidadosNorm = convidados.map(c => ({ ...c, chegou: !!c.chegou }));
-    await copyTable('convidados', ['id', 'lista_id', 'nome', 'instagram', 'telefone', 'quem_convida', 'chegou', 'added_at'], convidadosNorm);
+    await copyRows('holders', ['id', 'name', 'instagram', 'telefone', 'created_at'], holders);
+    await copyRows('aniversariantes', ['id', 'nome', 'instagram', 'telefone', 'data_evento', 'created_at'], anis);
+    await copyRows('pessoas_restritas', ['id', 'nome', 'motivo', 'criado_em'], restritas);
+    await copyRows('convidados_frequentes', ['id', 'nome', 'instagram', 'telefone', 'created_at'], convFreq);
+    await copyRows('listas', ['id', 'holder_id', 'aniversariante_id', 'convidado_id', 'data', 'tipo', 'dia_semana', 'created_at'], listas);
+    await copyRows('convidados', ['id', 'lista_id', 'nome', 'instagram', 'telefone', 'quem_convida', 'chegou', 'added_at'], convidados);
 
     console.log('\n✅ Migration complete.');
   } catch (err) {
