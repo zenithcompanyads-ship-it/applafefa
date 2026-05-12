@@ -312,22 +312,25 @@ function openAddHolderModal() {
 
 async function addHolder() {
   const name = document.getElementById('holderName').value.trim();
-  if (!name) return alert('Informe o nome');
-  await api('/api/holders', {
-    method: 'POST',
-    body: JSON.stringify({
-      name,
-      instagram: formatInstagram(document.getElementById('holderInstagram').value),
-      telefone: document.getElementById('holderTelefone').value.trim()
-    })
-  });
-  closeModal('addHolderModal');
-  loadHolders();
+  if (!name) return showToast('Informe o nome', 'error');
+  try {
+    await api('/api/holders', {
+      method: 'POST',
+      body: JSON.stringify({
+        name,
+        instagram: formatInstagram(document.getElementById('holderInstagram').value),
+        telefone: document.getElementById('holderTelefone').value.trim()
+      })
+    });
+    closeModal('addHolderModal');
+    showToast('Holder adicionado!');
+    loadHolders();
+  } catch (_) {}
 }
 
 async function openEditHolder(id) {
   const rows = await api('/api/holders');
-  const h = rows.find(x => x.id === id);
+  const h = rows.find(x => String(x.id) === String(id));
   if (!h) return;
   editingHolderId = id;
   document.getElementById('editHolderName').value = h.name || '';
@@ -338,17 +341,20 @@ async function openEditHolder(id) {
 
 async function saveHolder() {
   if (!editingHolderId) return;
-  await api(`/api/holders/${editingHolderId}`, {
-    method: 'PUT',
-    body: JSON.stringify({
-      name: document.getElementById('editHolderName').value.trim(),
-      instagram: formatInstagram(document.getElementById('editHolderInstagram').value),
-      telefone: document.getElementById('editHolderTelefone').value.trim()
-    })
-  });
-  closeModal('editHolderModal');
-  editingHolderId = null;
-  loadHolders();
+  try {
+    await api(`/api/holders/${editingHolderId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        name: document.getElementById('editHolderName').value.trim(),
+        instagram: formatInstagram(document.getElementById('editHolderInstagram').value),
+        telefone: document.getElementById('editHolderTelefone').value.trim()
+      })
+    });
+    closeModal('editHolderModal');
+    editingHolderId = null;
+    showToast('Holder salvo!');
+    loadHolders();
+  } catch (_) {}
 }
 
 async function deleteCurrentHolder() {
@@ -421,23 +427,26 @@ function openAddAniversarianteModal() {
 
 async function addAniversariante() {
   const nome = document.getElementById('aniversarianteName').value.trim();
-  if (!nome) return alert('Informe o nome');
-  await api('/api/aniversariantes', {
-    method: 'POST',
-    body: JSON.stringify({
-      nome,
-      instagram: formatInstagram(document.getElementById('aniversarianteInstagram').value),
-      telefone: document.getElementById('aniversarianteTelefone').value.trim(),
-      data_evento: document.getElementById('aniversarianteData').value || null
-    })
-  });
-  closeModal('addAniversarianteModal');
-  loadAniversariantes();
+  if (!nome) return showToast('Informe o nome', 'error');
+  try {
+    await api('/api/aniversariantes', {
+      method: 'POST',
+      body: JSON.stringify({
+        nome,
+        instagram: formatInstagram(document.getElementById('aniversarianteInstagram').value),
+        telefone: document.getElementById('aniversarianteTelefone').value.trim(),
+        data_evento: document.getElementById('aniversarianteData').value || null
+      })
+    });
+    closeModal('addAniversarianteModal');
+    showToast('Aniversariante adicionado!');
+    loadAniversariantes();
+  } catch (_) {}
 }
 
 async function openEditAniversariante(id) {
   const rows = await api('/api/aniversariantes');
-  const a = rows.find(x => x.id === id);
+  const a = rows.find(x => String(x.id) === String(id));
   if (!a) return;
   editingAniversarianteId = id;
   document.getElementById('editAniversarianteName').value = a.nome || '';
@@ -449,18 +458,21 @@ async function openEditAniversariante(id) {
 
 async function saveAniversariante() {
   if (!editingAniversarianteId) return;
-  await api(`/api/aniversariantes/${editingAniversarianteId}`, {
-    method: 'PUT',
-    body: JSON.stringify({
-      nome: document.getElementById('editAniversarianteName').value.trim(),
-      instagram: formatInstagram(document.getElementById('editAniversarianteInstagram').value),
-      telefone: document.getElementById('editAniversarianteTelefone').value.trim(),
-      data_evento: document.getElementById('editAniversarianteData').value || null
-    })
-  });
-  closeModal('editAniversarianteModal');
-  editingAniversarianteId = null;
-  loadAniversariantes();
+  try {
+    await api(`/api/aniversariantes/${editingAniversarianteId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        nome: document.getElementById('editAniversarianteName').value.trim(),
+        instagram: formatInstagram(document.getElementById('editAniversarianteInstagram').value),
+        telefone: document.getElementById('editAniversarianteTelefone').value.trim(),
+        data_evento: document.getElementById('editAniversarianteData').value || null
+      })
+    });
+    closeModal('editAniversarianteModal');
+    editingAniversarianteId = null;
+    showToast('Aniversariante salvo!');
+    loadAniversariantes();
+  } catch (_) {}
 }
 
 async function deleteCurrentAniversariante() {
@@ -531,7 +543,7 @@ async function addConvidado() {
 
 async function openEditConvidado(id) {
   const rows = await api('/api/convidados-frequentes');
-  const c = rows.find(x => x.id === id);
+  const c = rows.find(x => String(x.id) === String(id));
   if (!c) return;
   editingConvidadoId = id;
   document.getElementById('editConvidadoNome').value = c.nome || '';
@@ -542,17 +554,20 @@ async function openEditConvidado(id) {
 
 async function saveConvidado() {
   if (!editingConvidadoId) return;
-  await api(`/api/convidados-frequentes/${editingConvidadoId}`, {
-    method: 'PUT',
-    body: JSON.stringify({
-      nome: document.getElementById('editConvidadoNome').value.trim(),
-      instagram: formatInstagram(document.getElementById('editConvidadoInstagram').value),
-      telefone: document.getElementById('editConvidadoTelefone').value.trim()
-    })
-  });
-  closeModal('editConvidadoModal');
-  editingConvidadoId = null;
-  loadConvidados();
+  try {
+    await api(`/api/convidados-frequentes/${editingConvidadoId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        nome: document.getElementById('editConvidadoNome').value.trim(),
+        instagram: formatInstagram(document.getElementById('editConvidadoInstagram').value),
+        telefone: document.getElementById('editConvidadoTelefone').value.trim()
+      })
+    });
+    closeModal('editConvidadoModal');
+    editingConvidadoId = null;
+    showToast('Convidado salvo!');
+    loadConvidados();
+  } catch (_) {}
 }
 
 async function deleteCurrentConvidado() {
@@ -598,18 +613,21 @@ function openAddRestritaModal() {
 
 async function addRestrita() {
   const nome = document.getElementById('restritaNome').value.trim();
-  if (!nome) return alert('Informe o nome');
-  await api('/api/pessoas-restritas', {
-    method: 'POST',
-    body: JSON.stringify({ nome, motivo: document.getElementById('restritaMotivo').value.trim() })
-  });
-  closeModal('addRestritaModal');
-  loadRestritas();
+  if (!nome) return showToast('Informe o nome', 'error');
+  try {
+    await api('/api/pessoas-restritas', {
+      method: 'POST',
+      body: JSON.stringify({ nome, motivo: document.getElementById('restritaMotivo').value.trim() })
+    });
+    closeModal('addRestritaModal');
+    showToast('Pessoa adicionada à lista restrita!');
+    loadRestritas();
+  } catch (_) {}
 }
 
 async function openEditRestrita(id) {
   const rows = await api('/api/pessoas-restritas');
-  const r = rows.find(x => x.id === id);
+  const r = rows.find(x => String(x.id) === String(id));
   if (!r) return;
   editingRestritaId = id;
   document.getElementById('editRestritaNome').value = r.nome || '';
@@ -619,16 +637,19 @@ async function openEditRestrita(id) {
 
 async function saveRestrita() {
   if (!editingRestritaId) return;
-  await api(`/api/pessoas-restritas/${editingRestritaId}`, {
-    method: 'PUT',
-    body: JSON.stringify({
-      nome: document.getElementById('editRestritaNome').value.trim(),
-      motivo: document.getElementById('editRestritaMotivo').value.trim()
-    })
-  });
-  closeModal('editRestritaModal');
-  editingRestritaId = null;
-  loadRestritas();
+  try {
+    await api(`/api/pessoas-restritas/${editingRestritaId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        nome: document.getElementById('editRestritaNome').value.trim(),
+        motivo: document.getElementById('editRestritaMotivo').value.trim()
+      })
+    });
+    closeModal('editRestritaModal');
+    editingRestritaId = null;
+    showToast('Salvo!');
+    loadRestritas();
+  } catch (_) {}
 }
 
 async function deleteCurrentRestrita() {
@@ -716,23 +737,26 @@ async function openAddListModal(tipo) {
 
 async function addList() {
   const data = document.getElementById('addListDate').value;
-  if (!data) return alert('Informe a data');
+  if (!data) return showToast('Informe a data', 'error');
 
   const body = { data, tipo: addListType, dia_semana: addListSelectedDay };
 
   if (addListType === 'holder') {
     const ownerId = document.getElementById('addListOwner').value;
-    if (!ownerId) return alert('Selecione o holder');
+    if (!ownerId) return showToast('Selecione o holder', 'error');
     body.holder_id = Number(ownerId);
   } else {
     const nome = document.getElementById('addListOwnerName').value.trim();
-    if (!nome) return alert('Informe o nome do dono da lista');
+    if (!nome) return showToast('Informe o nome do dono da lista', 'error');
     body.convidado_nome = nome;
   }
 
-  await api('/api/listas', { method: 'POST', body: JSON.stringify(body) });
-  closeModal('addListModal');
-  loadListas();
+  try {
+    await api('/api/listas', { method: 'POST', body: JSON.stringify(body) });
+    closeModal('addListModal');
+    showToast('Lista criada!');
+    loadListas();
+  } catch (_) {}
 }
 
 // ============== DETALHE DA LISTA ==============
