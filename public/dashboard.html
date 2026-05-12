@@ -435,6 +435,62 @@
     .mini-badge.danger { background: rgba(255, 59, 48, 0.15); color: #b3271e; }
     .mini-badge.success { background: rgba(48, 209, 88, 0.18); color: #117a3a; }
 
+    /* Status badge on lista rows */
+    .status-pill {
+      font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 6px;
+      text-transform: uppercase; letter-spacing: 0.4px; flex-shrink: 0;
+    }
+    .status-pill.aberta   { background: rgba(48,209,88,0.14); color: #0a7a2e; }
+    .status-pill.encerrada { background: rgba(255,59,48,0.14); color: #b3271e; }
+    .status-pill.lotada   { background: rgba(255,149,0,0.14); color: #b66800; }
+
+    /* Capacity bar in list detail */
+    .cap-bar-wrap { margin: 8px 0; }
+    .cap-bar-label { font-size: 11px; color: var(--muted); font-weight: 600; margin-bottom: 4px; }
+    .cap-bar { height: 7px; background: rgba(0,0,0,0.07); border-radius: 4px; overflow: hidden; }
+    .cap-bar-fill { height: 100%; border-radius: 4px; transition: width .3s ease; }
+    .cap-bar-fill.ok   { background: var(--success); }
+    .cap-bar-fill.warn { background: var(--warning); }
+    .cap-bar-fill.full { background: var(--danger); }
+
+    /* Search bar */
+    .search-wrap {
+      position: relative; max-width: 420px;
+    }
+    .search-wrap input {
+      padding-left: 38px; background: rgba(255,255,255,0.85);
+      border: 1px solid var(--border-strong); border-radius: 12px;
+      font-size: 13.5px;
+    }
+    .search-wrap .search-ico {
+      position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+      width: 16px; height: 16px; opacity: 0.45; pointer-events: none;
+    }
+    #searchResults {
+      background: var(--glass);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border-radius: 20px; padding: 20px; margin-bottom: 20px;
+      border: 1px solid rgba(255,255,255,0.55);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.06);
+    }
+    .search-result-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 12px; background: rgba(255,255,255,0.7);
+      border: 1px solid rgba(255,255,255,0.7); border-radius: 12px; margin-bottom: 8px;
+    }
+    .search-result-item .sr-name { font-weight: 600; font-size: 13.5px; }
+    .search-result-item .sr-meta { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+
+    /* Token link box */
+    .token-box {
+      background: rgba(10,132,255,0.07); border: 1px solid rgba(10,132,255,0.2);
+      border-radius: 12px; padding: 12px 14px; margin-top: 10px;
+    }
+    .token-box .token-label { font-size: 11px; font-weight: 700; color: var(--accent); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .token-box .token-url { font-size: 12.5px; word-break: break-all; color: var(--ink); font-family: monospace; }
+    .token-box .token-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
     @media (max-width: 900px) {
       .wrapper { flex-direction: column; }
       .sidebar {
@@ -525,8 +581,15 @@
           <h1 id="pageTitle">Holders</h1>
           <div class="header-meta" id="monthDisplay"></div>
         </div>
-        <div class="header-meta" id="currentDate"></div>
+        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+          <div class="search-wrap">
+            <svg class="search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="searchInput" placeholder="Buscar convidado..." oninput="onSearchInput()" autocomplete="off">
+          </div>
+          <div class="header-meta" id="currentDate"></div>
+        </div>
       </div>
+      <div id="searchResults" style="display:none"></div>
 
       <!-- HOLDERS -->
       <div id="holders" class="tab-content active">
@@ -613,6 +676,7 @@
               <button class="btn ghost small" onclick="shiftWeek(-1)">‹ Anterior</button>
               <button class="btn ghost small" onclick="goToCurrentWeek()">Esta semana</button>
               <button class="btn ghost small" onclick="shiftWeek(1)">Próxima ›</button>
+              <button class="btn small" style="background:var(--ink);" onclick="generatePDF()">PDF</button>
             </div>
           </div>
           <div id="periodoAtivo" style="font-size:12px; color:var(--muted); font-weight:600; letter-spacing:.4px;"></div>
@@ -815,7 +879,10 @@
           <div class="form-group"><label>Instagram</label><input type="text" id="guestInstagram" placeholder="@username"></div>
           <div class="form-group"><label>Telefone</label><input type="text" id="guestTelefone" placeholder="(DD) 9XXXX-XXXX" maxlength="15"></div>
         </div>
-        <div class="form-group"><label>Quem convida (opcional)</label><input type="text" id="guestQuemConvida"></div>
+        <div class="row-2">
+          <div class="form-group"><label>CPF</label><input type="text" id="guestCpf" placeholder="000.000.000-00" maxlength="14"></div>
+          <div class="form-group"><label>Quem convida (opcional)</label><input type="text" id="guestQuemConvida"></div>
+        </div>
       </div>
 
       <!-- Modo em massa -->
@@ -839,6 +906,27 @@ Ou copie direto do WhatsApp:
       <div class="modal-buttons">
         <button class="btn secondary" onclick="closeModal('addGuestModal')">Cancelar</button>
         <button class="btn" id="guestAddBtn" onclick="addGuestToList()">Adicionar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Editar convidado da lista -->
+  <div id="editGuestModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">Editar Convidado</div>
+      <div class="form-group"><label>Nome</label><input type="text" id="editGuestName"></div>
+      <div class="row-2">
+        <div class="form-group"><label>Instagram</label><input type="text" id="editGuestInstagram"></div>
+        <div class="form-group"><label>Telefone</label><input type="text" id="editGuestTelefone" maxlength="15"></div>
+      </div>
+      <div class="row-2">
+        <div class="form-group"><label>CPF</label><input type="text" id="editGuestCpf" maxlength="14" placeholder="000.000.000-00"></div>
+        <div class="form-group"><label>Quem convida</label><input type="text" id="editGuestQuemConvida"></div>
+      </div>
+      <div class="modal-buttons">
+        <button class="btn secondary" onclick="closeModal('editGuestModal')">Cancelar</button>
+        <button class="btn danger" onclick="deleteCurrentGuest()">Remover</button>
+        <button class="btn" onclick="saveGuest()">Salvar</button>
       </div>
     </div>
   </div>

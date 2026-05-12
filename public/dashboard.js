@@ -14,6 +14,7 @@ let addListType = 'holder';              // 'holder' | 'convidado'
 let addListSelectedDay = null;
 let openListId = null;                   // lista expandida
 let openListContext = null;              // 'holder' | 'convidado' | 'aniversariante'
+let searchDebounceTimer = null;
 
 const DIA_LABEL = { qui: 'Quinta', sex: 'Sexta', sab: 'Sábado', dom: 'Domingo' };
 
@@ -82,6 +83,80 @@ function attachInstagramMask(id) {
   });
 }
 
+function formatCpf(value) {
+  let n = (value || '').replace(/\D/g, '').slice(0, 11);
+  if (!n) return '';
+  if (n.length <= 3) return n;
+  if (n.length <= 6) return `${n.slice(0,3)}.${n.slice(3)}`;
+  if (n.length <= 9) return `${n.slice(0,3)}.${n.slice(3,6)}.${n.slice(6)}`;
+  return `${n.slice(0,3)}.${n.slice(3,6)}.${n.slice(6,9)}-${n.slice(9)}`;
+}
+
+function attachCpfMask(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('input', e => { e.target.value = formatCpf(e.target.value); });
+}
+
+// ============== BUSCA GLOBAL ==============
+function onSearchInput() {
+  clearTimeout(searchDebounceTimer);
+  const q = (document.getElementById('searchInput')?.value || '').trim();
+  if (q.length < 2) {
+    document.getElementById('searchResults').style.display = 'none';
+    return;
+  }
+  searchDebounceTimer = setTimeout(() => searchGuests(q), 350);
+}
+
+async function searchGuests(query) {
+  const rows = await api(`/api/busca?q=${encodeURIComponent(query)}`);
+  if (!rows) return;
+  const cont = document.getElementById('searchResults');
+  if (!rows.length) {
+    cont.innerHTML = `<div class="section-title" style="margin-bottom:10px;">Busca: "${escapeHtml(query)}"</div><div class="empty-state" style="padding:30px 0"><p>Nenhum convidado encontrado</p></div>`;
+    cont.style.display = 'block';
+    return;
+  }
+  const statusLabel = { aberta: 'Aberta', encerrada: 'Encerrada', lotada: 'Lotada' };
+  cont.innerHTML = `
+    <div class="section-title" style="margin-bottom:12px;">Busca: "${escapeHtml(query)}" — ${rows.length} resultado${rows.length === 1 ? '' : 's'}</div>
+    ${rows.map(r => {
+      const listOwner = r.holder_nome || r.aniversariante_nome || r.convidado_nome || 'Lista';
+      const computedStatus = computeListStatus(r);
+      return `
+        <div class="search-result-item">
+          <div class="holder-avatar" style="width:36px;height:36px;font-size:14px;">${avatarFor(r.nome)}</div>
+          <div style="flex:1;min-width:0;">
+            <div class="sr-name">${escapeHtml(r.nome)} ${r.chegou ? '<span class="mini-badge success">Chegou</span>' : ''}</div>
+            <div class="sr-meta">${escapeHtml(listOwner)} · ${formatDateBR(r.data)} · <span class="status-pill ${computedStatus}">${statusLabel[computedStatus] || computedStatus}</span></div>
+          </div>
+          <button class="btn ghost small" onclick="openListDetail(${r.lista_id}, '${r.tipo}'); document.getElementById('searchInput').value=''; document.getElementById('searchResults').style.display='none'; changeTabByName('${r.tipo}');">Ver lista</button>
+        </div>
+      `;
+    }).join('')}
+  `;
+  cont.style.display = 'block';
+}
+
+function changeTabByName(tipo) {
+  const tabMap = { holder: 'listas', convidado: 'listas', aniversariante: 'aniversariantes' };
+  const tab = tabMap[tipo] || 'listas';
+  const btn = document.querySelector(`.nav-link[data-tab="${tab}"]`);
+  if (btn) changeTab(btn, tab);
+  if (tipo === 'holder' || tipo === 'convidado') {
+    const subBtn = document.querySelector(`.subtab[data-sub="${tipo}"]`);
+    if (subBtn) changeSubtab(subBtn, tipo);
+  }
+}
+
+function computeListStatus(l) {
+  if (l.status === 'encerrada') return 'encerrada';
+  const cap = Number(l.capacidade || 25);
+  if (Number(l.guest_count || 0) >= cap || l.status === 'lotada') return 'lotada';
+  return 'aberta';
+}
+
 async function api(path, opts) {
   try {
     const res = await fetch(path, {
@@ -131,12 +206,15 @@ document.addEventListener('DOMContentLoaded', () => {
   ['holderTelefone', 'editHolderTelefone',
    'aniversarianteTelefone', 'editAniversarianteTelefone',
    'convidadoTelefone', 'editConvidadoTelefone',
-   'guestTelefone'].forEach(attachPhoneMask);
+   'guestTelefone', 'editGuestTelefone'].forEach(attachPhoneMask);
 
   ['holderInstagram', 'editHolderInstagram',
    'aniversarianteInstagram', 'editAniversarianteInstagram',
    'convidadoInstagram', 'editConvidadoInstagram',
-   'guestInstagram'].forEach(attachInstagramMask);
+   'guestInstagram', 'editGuestInstagram'].forEach(attachInstagramMask);
+
+  attachCpfMask('guestCpf');
+  attachCpfMask('editGuestCpf');
 
   // Day chips picker (modal Nova Lista)
   document.querySelectorAll('#addListDayPicker .day-chip').forEach(c => {
@@ -676,6 +754,8 @@ async function loadListas() {
   } catch (e) { console.error(e); }
 }
 
+const STATUS_LABEL = { aberta: 'Aberta', encerrada: 'Encerrada', lotada: 'Lotada' };
+
 function renderListaRows(containerId, rows, tipo) {
   const cont = document.getElementById(containerId);
   if (!rows || !rows.length) {
@@ -686,15 +766,18 @@ function renderListaRows(containerId, rows, tipo) {
     const owner = l.holder_nome || l.convidado_nome || l.aniversariante_nome || 'Sem dono';
     const total = Number(l.guest_count || 0);
     const idas = Number(l.guests_attended || 0);
+    const cap = Number(l.capacidade || 25);
     const pct = total ? Math.round(idas * 100 / total) : 0;
     const dia = l.dia_semana ? `<span class="lista-pill">${DIA_LABEL[l.dia_semana] || l.dia_semana}</span>` : '';
+    const status = computeListStatus(l);
+    const horaLimite = l.hora_limite || '22:00';
     return `
       <div class="lista-row" onclick="openListDetail(${l.id}, '${tipo}')">
         <div class="left">
           <div class="holder-avatar">${avatarFor(owner)}</div>
           <div>
-            <div class="card-title">${escapeHtml(owner)} ${dia}</div>
-            <div class="card-meta">${formatDateBR(l.data)} · ${total} convidado${total === 1 ? '' : 's'}</div>
+            <div class="card-title">${escapeHtml(owner)} ${dia} <span class="status-pill ${status}">${STATUS_LABEL[status] || status}</span></div>
+            <div class="card-meta">${formatDateBR(l.data)} · ${total}/${cap} convidados · Válida até ${horaLimite}</div>
           </div>
         </div>
         <div class="lista-progress">
@@ -774,40 +857,94 @@ async function openListDetail(listaId, ctx) {
   await renderListDetail(listaId);
 }
 
+// Cache lista metadata for the open list
+let _openListaMeta = {};
+
 async function renderListDetail(listaId) {
-  const guests = await api(`/api/listas/${listaId}/convidados`);
+  const [guests, listas] = await Promise.all([
+    api(`/api/listas/${listaId}/convidados`),
+    api(`/api/listas?${getMonthQuery()}`)
+  ]);
   if (!guests) return;
+
+  // Find lista metadata across holder and convidado lists
+  let listaMeta = _openListaMeta[listaId];
+  if (!listas) {
+    listaMeta = listaMeta || { capacidade: 25, status: 'aberta', hora_limite: '22:00', token: null, tipo: '' };
+  } else {
+    const all = listas;
+    listaMeta = all.find(l => String(l.id) === String(listaId)) || listaMeta || { capacidade: 25, status: 'aberta', hora_limite: '22:00', token: null, tipo: '' };
+    _openListaMeta[listaId] = listaMeta;
+  }
+
+  const cap = Number(listaMeta?.capacidade || 25);
+  const status = computeListStatus({ ...listaMeta, guest_count: guests.length });
+  const horaLimite = listaMeta?.hora_limite || '22:00';
+  const token = listaMeta?.token || null;
   const total = guests.length;
   const idas = guests.filter(g => g.chegou).length;
   const pct = total ? Math.round(idas * 100 / total) : 0;
+  const capPct = Math.min(100, Math.round(total * 100 / cap));
+  const capFillCls = capPct >= 100 ? 'full' : capPct >= 75 ? 'warn' : 'ok';
+  const conviteUrl = token ? `${location.origin}/convite/${token}` : null;
 
   const html = `
     <div class="lista-detail">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-        <div>
-          <div style="font-weight:700; font-size:14px;">Convidados</div>
-          <div style="font-size:12px; color:var(--muted); margin-top:2px;">
-            ${idas}/${total} chegaram (${pct}%)
+      <!-- Header -->
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; gap:10px; flex-wrap:wrap;">
+        <div style="flex:1; min-width:0;">
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:6px;">
+            <div style="font-weight:700; font-size:14px;">Convidados</div>
+            <span class="status-pill ${status}">${STATUS_LABEL[status] || status}</span>
+          </div>
+          <div style="font-size:12px; color:var(--muted);">${idas}/${total} chegaram (${pct}%) · Válida até ${horaLimite}</div>
+          <div class="cap-bar-wrap" style="margin-top:8px; max-width:200px;">
+            <div class="cap-bar-label">${total}/${cap} vagas (${capPct}%)</div>
+            <div class="cap-bar"><div class="cap-bar-fill ${capFillCls}" style="width:${capPct}%"></div></div>
           </div>
         </div>
-        <div style="display:flex; gap:8px;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
           <button class="btn small" onclick="openAddGuestModal(${listaId})">+ Adicionar</button>
-          <button class="btn ghost small" onclick="confirmDeleteList(${listaId})">Apagar lista</button>
+          <button class="btn ghost small" onclick="toggleListStatus(${listaId}, '${status}', '${listaMeta?.tipo || ''}')">
+            ${status === 'encerrada' ? 'Reabrir' : 'Encerrar'}
+          </button>
+          <button class="btn ghost small" onclick="openListSettings(${listaId}, ${cap}, '${horaLimite}')">Configurar</button>
+          <button class="btn ghost small" onclick="confirmDeleteList(${listaId})">Apagar</button>
         </div>
       </div>
-      ${total === 0 ? `<div class="empty-state" style="padding:20px"><p>Sem convidados ainda</p></div>` :
-        guests.map(g => `
+
+      <!-- Token / link compartilhável -->
+      ${listaMeta?.tipo === 'aniversariante' ? `
+        <div class="token-box" style="margin-bottom:14px;">
+          <div class="token-label">Link compartilhável (aniversariante)</div>
+          ${conviteUrl ? `
+            <div class="token-url">${conviteUrl}</div>
+            <div class="token-actions">
+              <button class="btn ghost small" onclick="copyToken('${conviteUrl}')">Copiar link</button>
+              <button class="btn ghost small" style="color:var(--danger);" onclick="revokeToken(${listaId})">Revogar</button>
+            </div>
+          ` : `
+            <div style="font-size:12px; color:var(--muted); margin-bottom:8px;">Gere um link para o aniversariante adicionar os convidados (prazo: 17h00 do dia do evento).</div>
+            <button class="btn ghost small" onclick="generateToken(${listaId})">Gerar link</button>
+          `}
+        </div>
+      ` : ''}
+
+      <!-- Guest list -->
+      ${total === 0
+        ? `<div class="empty-state" style="padding:20px"><p>Sem convidados ainda</p></div>`
+        : guests.map(g => `
           <div class="guest-item">
             <input type="checkbox" class="guest-checkbox" ${g.chegou ? 'checked' : ''}
               onchange="togglePresenca(${g.id}, this.checked, ${listaId})">
             <div class="guest-info">
               <div class="guest-name ${g.chegou ? 'attended' : ''}">${escapeHtml(g.nome)}</div>
               <div class="guest-details">
-                ${escapeHtml(g.instagram || '')}${g.instagram && g.telefone ? ' · ' : ''}${escapeHtml(g.telefone || '')}
-                ${g.quem_convida ? ` · convidado por ${escapeHtml(g.quem_convida)}` : ''}
+                ${[g.instagram, g.telefone, g.cpf ? `CPF: ${escapeHtml(g.cpf)}` : '', g.quem_convida ? `por ${escapeHtml(g.quem_convida)}` : ''].filter(Boolean).join(' · ')}
               </div>
             </div>
             <div class="guest-actions">
+              <button class="btn ghost small" onclick="openEditGuest(${g.id}, ${listaId})">Editar</button>
               <button class="btn ghost small" onclick="removeGuest(${g.id}, ${listaId})">Remover</button>
             </div>
           </div>
@@ -817,6 +954,116 @@ async function renderListDetail(listaId) {
   `;
   const target = document.getElementById(`listDetail-${listaId}`);
   if (target) target.innerHTML = html;
+}
+
+async function toggleListStatus(listaId, currentStatus, tipo) {
+  const newStatus = currentStatus === 'encerrada' ? 'aberta' : 'encerrada';
+  const lista = _openListaMeta[listaId] || {};
+  await api(`/api/listas/${listaId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ data: lista.data || todayISO(), status: newStatus })
+  });
+  if (_openListaMeta[listaId]) _openListaMeta[listaId].status = newStatus;
+  await renderListDetail(listaId);
+  if (currentTab === 'listas') loadListas();
+}
+
+function openListSettings(listaId, cap, horaLimite) {
+  const newCap = prompt(`Capacidade máxima (atual: ${cap}):`, cap);
+  if (newCap === null) return;
+  const newHora = prompt(`Válida até (formato HH:MM, atual: ${horaLimite}):`, horaLimite);
+  if (newHora === null) return;
+  const lista = _openListaMeta[listaId] || {};
+  api(`/api/listas/${listaId}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      data: lista.data || todayISO(),
+      capacidade: Number(newCap) || 25,
+      hora_limite: newHora.trim() || '22:00'
+    })
+  }).then(() => {
+    if (_openListaMeta[listaId]) {
+      _openListaMeta[listaId].capacidade = Number(newCap) || 25;
+      _openListaMeta[listaId].hora_limite = newHora.trim() || '22:00';
+    }
+    showToast('Configurações salvas!');
+    renderListDetail(listaId);
+    if (currentTab === 'listas') loadListas();
+  }).catch(() => {});
+}
+
+async function generateToken(listaId) {
+  const data = await api(`/api/listas/${listaId}/token`, { method: 'POST', body: JSON.stringify({}) });
+  if (!data) return;
+  if (_openListaMeta[listaId]) _openListaMeta[listaId].token = data.token;
+  showToast('Link gerado!');
+  await renderListDetail(listaId);
+}
+
+async function revokeToken(listaId) {
+  if (!confirm('Revogar o link? O aniversariante não poderá mais adicionar convidados por ele.')) return;
+  await api(`/api/listas/${listaId}/token`, { method: 'POST', body: JSON.stringify({ revoke: true }) });
+  if (_openListaMeta[listaId]) _openListaMeta[listaId].token = null;
+  showToast('Link revogado.');
+  await renderListDetail(listaId);
+}
+
+function copyToken(url) {
+  navigator.clipboard?.writeText(url).then(() => showToast('Link copiado!')).catch(() => {
+    prompt('Copie o link:', url);
+  });
+}
+
+// Edit guest in a list
+let editingGuestId = null;
+let editingGuestListaId = null;
+
+async function openEditGuest(guestId, listaId) {
+  const guests = await api(`/api/listas/${listaId}/convidados`);
+  if (!guests) return;
+  const g = guests.find(x => String(x.id) === String(guestId));
+  if (!g) return;
+  editingGuestId = guestId;
+  editingGuestListaId = listaId;
+  document.getElementById('editGuestName').value = g.nome || '';
+  document.getElementById('editGuestInstagram').value = g.instagram || '';
+  document.getElementById('editGuestTelefone').value = g.telefone || '';
+  document.getElementById('editGuestCpf').value = g.cpf || '';
+  document.getElementById('editGuestQuemConvida').value = g.quem_convida || '';
+  openModal('editGuestModal');
+}
+
+async function saveGuest() {
+  if (!editingGuestId) return;
+  try {
+    await api(`/api/convidados/${editingGuestId}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        nome: document.getElementById('editGuestName').value.trim(),
+        instagram: formatInstagram(document.getElementById('editGuestInstagram').value),
+        telefone: document.getElementById('editGuestTelefone').value.trim(),
+        cpf: document.getElementById('editGuestCpf').value.trim(),
+        quem_convida: document.getElementById('editGuestQuemConvida').value.trim()
+      })
+    });
+    closeModal('editGuestModal');
+    showToast('Convidado salvo!');
+    await renderListDetail(editingGuestListaId);
+    editingGuestId = null;
+    editingGuestListaId = null;
+  } catch (_) {}
+}
+
+async function deleteCurrentGuest() {
+  if (!editingGuestId || !editingGuestListaId) return;
+  if (!confirm('Remover este convidado da lista?')) return;
+  await api(`/api/convidados/${editingGuestId}`, { method: 'DELETE' });
+  closeModal('editGuestModal');
+  await renderListDetail(editingGuestListaId);
+  if (currentTab === 'listas') loadListas();
+  if (currentTab === 'aniversariantes') loadAniversariantes();
+  editingGuestId = null;
+  editingGuestListaId = null;
 }
 
 async function togglePresenca(guestId, chegou, listaId) {
@@ -843,6 +1090,7 @@ function openAddGuestModal(listaId) {
   document.getElementById('guestName').value = '';
   document.getElementById('guestInstagram').value = '';
   document.getElementById('guestTelefone').value = '';
+  document.getElementById('guestCpf').value = '';
   document.getElementById('guestQuemConvida').value = '';
   document.getElementById('guestBulkText').value = '';
   document.getElementById('guestBulkQuemConvida').value = '';
@@ -934,13 +1182,14 @@ async function addGuestToList() {
   }
 
   const nome = document.getElementById('guestName').value.trim();
-  if (!nome) return alert('Informe o nome');
+  if (!nome) return showToast('Informe o nome', 'error');
   await api(`/api/listas/${addGuestListaId}/convidados`, {
     method: 'POST',
     body: JSON.stringify({
       nome,
       instagram: formatInstagram(document.getElementById('guestInstagram').value),
       telefone: document.getElementById('guestTelefone').value.trim(),
+      cpf: document.getElementById('guestCpf').value.trim(),
       quem_convida: document.getElementById('guestQuemConvida').value.trim()
     })
   });
@@ -1141,4 +1390,91 @@ function renderAlertas(rows) {
       </div>
     `;
   }).join('');
+}
+
+// ============== PDF SEMANAL ==============
+async function generatePDF() {
+  if (analiseMode !== 'semana' && !weekStart) weekStart = startOfWeek(new Date());
+  const { qs, label } = getAnaliseQuery();
+  showToast('Gerando PDF...');
+
+  try {
+    const [resumo, holders, alertas, listas] = await Promise.all([
+      api(`/api/analise/resumo?${qs}`),
+      api(`/api/analise/holders-performance?${qs}`),
+      api(`/api/analise/alertas-pessoas?${qs}&min=1`),
+      api(`/api/listas?${qs}`)
+    ]);
+
+    const w = window.open('', '_blank');
+    if (!w) { showToast('Permita pop-ups para gerar o PDF.', 'error'); return; }
+
+    const totalL = Number(resumo?.total_listas || 0);
+    const totalC = Number(resumo?.total_convites || 0);
+    const totalI = Number(resumo?.total_idas || 0);
+    const taxa   = Number(resumo?.taxa_global || 0);
+
+    const holdersRows = (holders || []).map(h => `
+      <tr>
+        <td>${escapeHtml(h.name)}</td>
+        <td style="text-align:center">${h.total_listas}</td>
+        <td style="text-align:center">${h.total_convites}</td>
+        <td style="text-align:center">${h.total_idas}</td>
+        <td style="text-align:center">${h.taxa_ativacao ?? 0}%</td>
+      </tr>
+    `).join('');
+
+    const alertasRows = (alertas || []).map(r => `
+      <tr>
+        <td>${escapeHtml(r.nome)}</td>
+        <td style="text-align:center">${r.total_vezes}</td>
+        <td style="text-align:center">${r.total_idas}</td>
+        <td style="text-align:center">${r.total_faltas}</td>
+        <td>${escapeHtml(r.convidada_por || '')}</td>
+      </tr>
+    `).join('');
+
+    w.document.write(`<!DOCTYPE html><html lang="pt-BR"><head>
+      <meta charset="UTF-8">
+      <title>LA FEFA — ${label}</title>
+      <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body { font-family: -apple-system, Helvetica, Arial, sans-serif; color:#1d1d1f; padding:32px; font-size:13px; }
+        h1 { font-size:22px; font-weight:800; letter-spacing:-0.5px; margin-bottom:4px; }
+        .sub { font-size:12px; color:#666; margin-bottom:24px; }
+        .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:28px; }
+        .stat { border:1px solid #e0e0e0; border-radius:10px; padding:14px; text-align:center; }
+        .stat .n { font-size:26px; font-weight:800; }
+        .stat .l { font-size:10px; text-transform:uppercase; letter-spacing:0.5px; color:#888; margin-top:4px; }
+        h2 { font-size:14px; font-weight:700; margin-bottom:10px; border-bottom:1px solid #eee; padding-bottom:6px; }
+        table { width:100%; border-collapse:collapse; margin-bottom:24px; }
+        th, td { padding:8px 10px; text-align:left; border-bottom:1px solid #f0f0f0; font-size:12px; }
+        th { font-size:10px; text-transform:uppercase; letter-spacing:0.5px; color:#888; font-weight:700; }
+        .footer { text-align:center; color:#aaa; font-size:11px; margin-top:24px; }
+        @media print { body { padding:20px; } }
+      </style>
+    </head><body>
+      <h1>LA FEFA</h1>
+      <div class="sub">Resumo · ${label} · Gerado em ${new Date().toLocaleDateString('pt-BR')}</div>
+
+      <div class="stats">
+        <div class="stat"><div class="n">${totalL}</div><div class="l">Listas</div></div>
+        <div class="stat"><div class="n">${totalC}</div><div class="l">Convites</div></div>
+        <div class="stat"><div class="n">${totalI}</div><div class="l">Idas</div></div>
+        <div class="stat"><div class="n">${taxa}%</div><div class="l">Taxa de ativação</div></div>
+      </div>
+
+      <h2>Performance dos Holders</h2>
+      ${holdersRows ? `<table><thead><tr><th>Holder</th><th>Listas</th><th>Convites</th><th>Idas</th><th>Taxa</th></tr></thead><tbody>${holdersRows}</tbody></table>` : '<p style="color:#888;margin-bottom:20px">Nenhum dado.</p>'}
+
+      <h2>Alertas de Presença</h2>
+      ${alertasRows ? `<table><thead><tr><th>Nome</th><th>Vezes</th><th>Idas</th><th>Faltas</th><th>Convidada por</th></tr></thead><tbody>${alertasRows}</tbody></table>` : '<p style="color:#888;margin-bottom:20px">Sem alertas.</p>'}
+
+      <div class="footer">LA FEFA · Gestão de Listas</div>
+      <script>window.onload=()=>window.print();<\/script>
+    </body></html>`);
+    w.document.close();
+  } catch (e) {
+    showToast('Erro ao gerar PDF.', 'error');
+  }
 }

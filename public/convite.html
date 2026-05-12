@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LA FEFA — Adicionar à Lista</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --ink: #1d1d1f; --ink-2: #515154; --muted: #86868b;
+      --border: rgba(0,0,0,0.10); --success: #30d158;
+      --danger: #ff3b30; --warning: #ff9500;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+      background: linear-gradient(135deg, #f5f6f8, #eceef2);
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      padding: 24px; -webkit-font-smoothing: antialiased;
+    }
+    .card {
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: blur(30px); -webkit-backdrop-filter: blur(30px);
+      border-radius: 24px; padding: 32px; width: 100%; max-width: 420px;
+      border: 1px solid rgba(255,255,255,0.7);
+      box-shadow: 0 24px 60px rgba(0,0,0,0.14);
+    }
+    .logo { text-align: center; margin-bottom: 24px; }
+    .logo h1 { font-size: 20px; font-weight: 800; letter-spacing: 0.5px; }
+    .logo p { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1.4px; margin-top: 4px; font-weight: 600; }
+    .lista-info {
+      background: rgba(0,0,0,0.03); border-radius: 14px; padding: 16px 18px;
+      margin-bottom: 22px; border: 1px solid var(--border);
+    }
+    .lista-info .owner { font-size: 17px; font-weight: 700; }
+    .lista-info .meta { font-size: 13px; color: var(--muted); margin-top: 4px; }
+    .status-badge {
+      display: inline-block; padding: 3px 10px; border-radius: 6px;
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+      margin-top: 8px;
+    }
+    .status-badge.aberta  { background: rgba(48,209,88,0.15); color: #0a7a2e; }
+    .status-badge.encerrada { background: rgba(255,59,48,0.15); color: #b3271e; }
+    .status-badge.lotada  { background: rgba(255,149,0,0.15); color: #b66800; }
+
+    .capacity-bar-wrap { margin-top: 10px; }
+    .capacity-bar-label { font-size: 11px; color: var(--muted); font-weight: 600; margin-bottom: 4px; }
+    .capacity-bar { height: 6px; background: rgba(0,0,0,0.08); border-radius: 3px; overflow: hidden; }
+    .capacity-bar-fill { height: 100%; border-radius: 3px; transition: width .3s ease; }
+    .capacity-bar-fill.ok     { background: var(--success); }
+    .capacity-bar-fill.warn   { background: var(--warning); }
+    .capacity-bar-fill.danger { background: var(--danger); }
+
+    h2 { font-size: 15px; font-weight: 700; margin-bottom: 16px; }
+    .form-group { margin-bottom: 14px; }
+    label { display: block; font-size: 11px; font-weight: 700; color: var(--ink); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    input {
+      width: 100%; padding: 12px 14px;
+      border: 1px solid rgba(0,0,0,0.14); border-radius: 12px;
+      font-size: 14px; font-family: inherit; color: var(--ink);
+      background: rgba(255,255,255,0.85);
+      transition: border-color .15s, box-shadow .15s;
+    }
+    input:focus { outline: none; border-color: var(--ink); background: #fff; box-shadow: 0 0 0 4px rgba(0,0,0,0.08); }
+    .btn {
+      width: 100%; padding: 14px; background: var(--ink); color: #fff;
+      border: none; border-radius: 12px; font-size: 14px; font-weight: 700;
+      cursor: pointer; letter-spacing: 0.3px;
+      transition: filter .15s, transform .1s, box-shadow .15s;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.14);
+    }
+    .btn:hover:not(:disabled) { filter: brightness(1.1); box-shadow: 0 6px 20px rgba(0,0,0,0.18); }
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .msg {
+      text-align: center; padding: 14px; border-radius: 12px; font-size: 14px;
+      font-weight: 600; margin-bottom: 16px; display: none;
+    }
+    .msg.success { background: rgba(48,209,88,0.12); color: #0a7a2e; display: block; }
+    .msg.error   { background: rgba(255,59,48,0.12); color: #b3271e; display: block; }
+
+    .deadline-notice {
+      text-align: center; font-size: 12px; color: var(--muted); margin-top: 14px;
+      padding: 10px; background: rgba(255,149,0,0.08); border-radius: 10px;
+    }
+    .deadline-notice strong { color: #b66800; }
+
+    .convidados-list { margin-top: 20px; }
+    .convidados-list h3 { font-size: 13px; font-weight: 700; color: var(--ink-2); margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .convidado-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px; background: rgba(0,0,0,0.03); border-radius: 10px;
+      margin-bottom: 6px; font-size: 13px;
+    }
+    .convidado-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+
+    .blocked {
+      text-align: center; padding: 24px 0;
+    }
+    .blocked .ico { font-size: 48px; margin-bottom: 12px; }
+    .blocked h2 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+    .blocked p { font-size: 14px; color: var(--muted); }
+
+    #loadingState { text-align: center; padding: 40px 0; color: var(--muted); }
+  </style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <h1>LA FEFA</h1>
+    <p>Adicionar à Lista</p>
+  </div>
+
+  <div id="loadingState">Carregando...</div>
+  <div id="mainContent" style="display:none"></div>
+</div>
+
+<script>
+  const token = location.pathname.split('/').pop();
+
+  async function loadLista() {
+    try {
+      const r = await fetch(`/api/convite/${token}`);
+      const lista = await r.json();
+      if (!r.ok) return showBlocked('Lista não encontrada', lista.error || '');
+      render(lista);
+    } catch {
+      showBlocked('Erro', 'Não foi possível carregar a lista.');
+    }
+  }
+
+  function formatDate(iso) {
+    if (!iso) return '';
+    const [y, m, d] = String(iso).slice(0, 10).split('-');
+    return `${d}/${m}/${y}`;
+  }
+
+  function computeStatus(lista) {
+    const cap = Number(lista.capacidade || 25);
+    if (lista.status === 'encerrada') return 'encerrada';
+    if (Number(lista.guest_count) >= cap || lista.status === 'lotada') return 'lotada';
+    // Check deadline: 17h00 Brasília
+    if (lista.data) {
+      const deadline = new Date(`${String(lista.data).slice(0,10)}T20:00:00Z`);
+      if (new Date() > deadline) return 'encerrada';
+    }
+    return 'aberta';
+  }
+
+  function render(lista) {
+    const status = computeStatus(lista);
+    const cap = Number(lista.capacidade || 25);
+    const count = Number(lista.guest_count || 0);
+    const pct = Math.min(100, Math.round(count * 100 / cap));
+    const fillCls = pct >= 100 ? 'danger' : pct >= 75 ? 'warn' : 'ok';
+    const owner = lista.aniversariante_nome || 'Lista de Convidados';
+    const data = lista.data_evento || lista.data;
+    const deadline = data ? `${String(data).slice(0, 10)}` : null;
+    const deadlineLabel = deadline ? `Prazo para adicionar convidados: <strong>17h00 do dia ${formatDate(deadline)}</strong>` : '';
+
+    const statusLabel = { aberta: 'Aberta', encerrada: 'Encerrada', lotada: 'Lotada' }[status] || status;
+
+    const isBlocked = status !== 'aberta';
+
+    const html = `
+      <div class="lista-info">
+        <div class="owner">${escHtml(owner)}</div>
+        <div class="meta">${data ? 'Evento: ' + formatDate(data) : ''} · ${count}/${cap} pessoas</div>
+        <span class="status-badge ${status}">${statusLabel}</span>
+        <div class="capacity-bar-wrap">
+          <div class="capacity-bar-label">${count} de ${cap} vagas preenchidas</div>
+          <div class="capacity-bar"><div class="capacity-bar-fill ${fillCls}" style="width:${pct}%"></div></div>
+        </div>
+      </div>
+
+      ${isBlocked ? `
+        <div class="blocked">
+          <div class="ico">${status === 'lotada' ? '🈵' : '🔒'}</div>
+          <h2>${status === 'lotada' ? 'Lista Lotada' : 'Lista Encerrada'}</h2>
+          <p>${status === 'lotada' ? 'Capacidade máxima atingida.' : 'Esta lista não aceita mais convidados.'}</p>
+        </div>
+      ` : `
+        <h2>Adicionar convidado</h2>
+        <div id="msgBox" class="msg"></div>
+        <div id="formWrap">
+          <div class="form-group">
+            <label>Nome *</label>
+            <input type="text" id="nome" placeholder="Seu nome completo" autocomplete="name">
+          </div>
+          <div class="form-group">
+            <label>Instagram (opcional)</label>
+            <input type="text" id="instagram" placeholder="@username">
+          </div>
+          <div class="form-group">
+            <label>Telefone (opcional)</label>
+            <input type="tel" id="telefone" placeholder="(DD) 9XXXX-XXXX" maxlength="15">
+          </div>
+          <button class="btn" id="submitBtn" onclick="submitGuest()">Adicionar à Lista</button>
+          ${deadlineLabel ? `<div class="deadline-notice">${deadlineLabel}</div>` : ''}
+        </div>
+      `}
+
+      <div class="convidados-list" id="convidadosList"></div>
+    `;
+
+    document.getElementById('mainContent').innerHTML = html;
+    document.getElementById('mainContent').style.display = '';
+    document.getElementById('loadingState').style.display = 'none';
+
+    if (!isBlocked) loadConvidados();
+  }
+
+  async function loadConvidados() {
+    try {
+      const r = await fetch(`/api/convite/${token}/convidados`);
+      if (!r.ok) return;
+      const rows = await r.json();
+      const cont = document.getElementById('convidadosList');
+      if (!cont) return;
+      if (!rows.length) { cont.innerHTML = ''; return; }
+      cont.innerHTML = `
+        <h3>${rows.length} na lista</h3>
+        ${rows.map(c => `<div class="convidado-item"><div class="convidado-dot"></div>${escHtml(c.nome)}</div>`).join('')}
+      `;
+    } catch {}
+  }
+
+  async function submitGuest() {
+    const nome = (document.getElementById('nome')?.value || '').trim();
+    const instagram = (document.getElementById('instagram')?.value || '').trim();
+    const telefone = (document.getElementById('telefone')?.value || '').trim();
+    const btn = document.getElementById('submitBtn');
+    const msg = document.getElementById('msgBox');
+
+    if (!nome) { showMsg('Informe seu nome.', 'error'); return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Adicionando...';
+
+    try {
+      const r = await fetch(`/api/convite/${token}/convidados`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nome, instagram, telefone })
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        showMsg(data.error || 'Erro ao adicionar.', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Adicionar à Lista';
+        return;
+      }
+      showMsg(`✓ ${nome} adicionado(a) com sucesso!`, 'success');
+      document.getElementById('formWrap').style.display = 'none';
+      loadConvidados();
+      // Reload the page status after a short delay
+      setTimeout(loadLista, 1500);
+    } catch {
+      showMsg('Erro de conexão. Tente novamente.', 'error');
+      btn.disabled = false;
+      btn.textContent = 'Adicionar à Lista';
+    }
+  }
+
+  function showMsg(text, type) {
+    const el = document.getElementById('msgBox');
+    if (!el) return;
+    el.textContent = text;
+    el.className = `msg ${type}`;
+  }
+
+  function showBlocked(title, detail) {
+    document.getElementById('mainContent').innerHTML = `
+      <div class="blocked">
+        <div class="ico">❌</div>
+        <h2>${escHtml(title)}</h2>
+        <p>${escHtml(detail)}</p>
+      </div>
+    `;
+    document.getElementById('mainContent').style.display = '';
+    document.getElementById('loadingState').style.display = 'none';
+  }
+
+  function escHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  loadLista();
+</script>
+</body>
+</html>

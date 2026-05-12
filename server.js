@@ -10,6 +10,7 @@ const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');
 const path = require('path');
 const { Pool } = require('pg');
+const crypto = require('crypto');
 
 const app = express();
 
@@ -294,17 +295,133 @@ app.post('/api/listas', checkAuth, wrap(async (req, res) => {
 }));
 
 app.put('/api/listas/:id', checkAuth, wrap(async (req, res) => {
-  const { data, dia_semana } = req.body;
-  await q(
-    'UPDATE listas SET data = $1, dia_semana = $2 WHERE id = $3',
-    [data, dia_semana || null, req.params.id]
-  );
+  const { data, dia_semana, status, capacidade, hora_limite } = req.body;
+  const sets = ['data = $1', 'dia_semana = $2'];
+  const params = [data, dia_semana || null];
+  let i = 3;
+  if (status !== undefined)      { sets.push(`status = $${i++}`);      params.push(status); }
+  if (capacidade !== undefined)  { sets.push(`capacidade = $${i++}`);  params.push(Number(capacidade)); }
+  if (hora_limite !== undefined) { sets.push(`hora_limite = $${i++}`); params.push(hora_limite); }
+  params.push(req.params.id);
+  await q(`UPDATE listas SET ${sets.join(', ')} WHERE id = $${i}`, params);
   res.json({ success: true });
 }));
 
 app.delete('/api/listas/:id', checkAuth, wrap(async (req, res) => {
   await q('DELETE FROM listas WHERE id = $1', [req.params.id]);
   res.json({ success: true });
+}));
+
+// Generate / revoke shareable token
+app.post('/api/listas/:id/token', checkAuth, wrap(async (req, res) => {
+  const { revoke } = req.body || {};
+  if (revoke) {
+    await q('UPDATE listas SET token = NULL WHERE id = $1', [req.params.id]);
+    return res.json({ token: null });
+  }
+  const token = crypto.randomBytes(12).toString('hex');
+  await q('UPDATE listas SET token = $1 WHERE id = $2', [token, req.params.id]);
+  res.json({ token });
+}));
+
+// =================== BUSCA GLOBAL ===================
+app.get('/api/busca', checkAuth, wrap(async (req, res) => {
+  const query = (req.query.q || '').trim();
+  if (query.length < 2) return res.json([]);
+  const term = `%${query.toLowerCase()}%`;
+  const rows = await qAll(`
+    SELECT
+      c.id, c.nome, c.instagram, c.telefone, c.chegou,
+      l.id AS lista_id, l.data, l.tipo, l.status, l.capacidade,
+      h.name AS holder_nome,
+      a.nome AS aniversariante_nome,
+      cf.nome AS convidado_nome
+    FROM convidados c
+    JOIN listas l ON c.lista_id = l.id
+    LEFT JOIN holders h ON l.holder_id = h.id
+    LEFT JOIN aniversariantes a ON l.aniversariante_id = a.id
+    LEFT JOIN convidados_frequentes cf ON l.convidado_id = cf.id
+    WHERE LOWER(c.nome) LIKE $1
+    ORDER BY l.data DESC, c.nome
+    LIMIT 60
+  `, [term]);
+  res.json(rows);
+}));
+
+// =================== CONVITE (público, sem auth) ===================
+app.get('/convite/:token', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public/convite.html'));
+});
+
+app.get('/api/convite/:token', wrap(async (req, res) => {
+  const lista = await qOne(`
+    SELECT l.*, a.nome AS aniversariante_nome, a.data_evento,
+           COUNT(c.id)::int AS guest_count
+    FROM listas l
+    LEFT JOIN aniversariantes a ON l.aniversariante_id = a.id
+    LEFT JOIN convidados c ON c.lista_id = l.id
+    WHERE l.token = $1
+    GROUP BY l.id, a.nome, a.data_evento
+  `, [req.params.token]);
+  if (!lista) return res.status(404).json({ error: 'Lista não encontrada' });
+  res.json(lista);
+}));
+
+app.post('/api/convite/:token/convidados', wrap(async (req, res) => {
+  const lista = await qOne(
+    'SELECT * FROM listas WHERE token = $1', [req.params.token]
+  );
+  if (!lista) return res.status(404).json({ error: 'Lista não encontrada' });
+
+  if (lista.status === 'encerrada') {
+    return res.status(403).json({ error: 'Esta lista está encerrada pelo administrador.' });
+  }
+
+  // Enforce 17h00 Brasília (UTC-3 = 20h00 UTC) deadline on the event day
+  const eventDate = lista.data;
+  if (eventDate) {
+    const deadline = new Date(`${String(eventDate).slice(0, 10)}T20:00:00Z`);
+    if (new Date() > deadline) {
+      return res.status(403).json({ error: 'Prazo encerrado. Convidados só podem ser adicionados até as 17h00 do dia do evento.' });
+    }
+  }
+
+  // Enforce capacity
+  const countRow = await qOne(
+    'SELECT COUNT(*)::int AS n FROM convidados WHERE lista_id = $1', [lista.id]
+  );
+  const cap = Number(lista.capacidade || 25);
+  if (countRow.n >= cap) {
+    return res.status(403).json({ error: `Lista lotada! Capacidade máxima de ${cap} pessoas atingida.` });
+  }
+
+  const { nome, instagram, telefone } = req.body;
+  if (!nome || !String(nome).trim()) {
+    return res.status(400).json({ error: 'Nome é obrigatório.' });
+  }
+
+  const row = await qOne(
+    `INSERT INTO convidados (lista_id, nome, instagram, telefone)
+     VALUES ($1, $2, $3, $4) RETURNING *`,
+    [lista.id, String(nome).trim(), instagram || '', telefone || '']
+  );
+
+  // Auto-mark as lotada when full
+  if (countRow.n + 1 >= cap) {
+    await q("UPDATE listas SET status = 'lotada' WHERE id = $1 AND status = 'aberta'", [lista.id]);
+  }
+
+  res.json(row);
+}));
+
+app.get('/api/convite/:token/convidados', wrap(async (req, res) => {
+  const lista = await qOne('SELECT id FROM listas WHERE token = $1', [req.params.token]);
+  if (!lista) return res.status(404).json({ error: 'Lista não encontrada' });
+  const rows = await qAll(
+    'SELECT id, nome, instagram FROM convidados WHERE lista_id = $1 ORDER BY nome',
+    [lista.id]
+  );
+  res.json(rows);
 }));
 
 // Convidados de uma lista
@@ -317,11 +434,11 @@ app.get('/api/listas/:id/convidados', checkAuth, wrap(async (req, res) => {
 }));
 
 app.post('/api/listas/:id/convidados', checkAuth, wrap(async (req, res) => {
-  const { nome, instagram, telefone, quem_convida } = req.body;
+  const { nome, instagram, telefone, quem_convida, cpf } = req.body;
   const row = await qOne(
-    `INSERT INTO convidados (lista_id, nome, instagram, telefone, quem_convida)
-     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-    [req.params.id, nome, instagram || '', telefone || '', quem_convida || '']
+    `INSERT INTO convidados (lista_id, nome, instagram, telefone, quem_convida, cpf)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+    [req.params.id, nome, instagram || '', telefone || '', quem_convida || '', cpf || '']
   );
   res.json(row);
 }));
@@ -360,10 +477,10 @@ app.put('/api/convidados/:id/presenca', checkAuth, wrap(async (req, res) => {
 }));
 
 app.put('/api/convidados/:id', checkAuth, wrap(async (req, res) => {
-  const { nome, instagram, telefone, quem_convida } = req.body;
+  const { nome, instagram, telefone, quem_convida, cpf } = req.body;
   await q(
-    'UPDATE convidados SET nome = $1, instagram = $2, telefone = $3, quem_convida = $4 WHERE id = $5',
-    [nome, instagram || '', telefone || '', quem_convida || '', req.params.id]
+    'UPDATE convidados SET nome = $1, instagram = $2, telefone = $3, quem_convida = $4, cpf = $5 WHERE id = $6',
+    [nome, instagram || '', telefone || '', quem_convida || '', cpf || '', req.params.id]
   );
   res.json({ success: true });
 }));
