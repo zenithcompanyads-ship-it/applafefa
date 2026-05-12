@@ -83,17 +83,41 @@ function attachInstagramMask(id) {
 }
 
 async function api(path, opts) {
-  const res = await fetch(path, {
-    headers: { 'Content-Type': 'application/json' },
-    ...opts,
-  });
-  if (res.status === 401) { window.location.href = '/login'; return null; }
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Erro' }));
-    throw new Error(err.error || 'Erro');
+  try {
+    const res = await fetch(path, {
+      headers: { 'Content-Type': 'application/json' },
+      ...opts,
+    });
+    if (res.status === 401) { window.location.href = '/login'; return null; }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Erro desconhecido' }));
+      const msg = err.error || `Erro ${res.status}`;
+      showToast(msg, 'error');
+      throw new Error(msg);
+    }
+    if (res.status === 204) return null;
+    return res.json();
+  } catch (e) {
+    if (e.message !== 'Failed to fetch') throw e;
+    showToast('Sem conexão com o servidor. Verifique sua internet.', 'error');
+    throw e;
   }
-  if (res.status === 204) return null;
-  return res.json();
+}
+
+function showToast(msg, type = 'info') {
+  let t = document.getElementById('_toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = '_toast';
+    t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:12px 24px;border-radius:12px;font-size:14px;font-weight:600;z-index:9999;max-width:90vw;text-align:center;box-shadow:0 4px 20px rgba(0,0,0,.25);transition:opacity .3s';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.background = type === 'error' ? '#ff3b3b' : '#222';
+  t.style.color = '#fff';
+  t.style.opacity = '1';
+  clearTimeout(t._hide);
+  t._hide = setTimeout(() => { t.style.opacity = '0'; }, 3500);
 }
 
 // ============== INIT ==============
