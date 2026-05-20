@@ -1392,6 +1392,126 @@ function renderAlertas(rows) {
   }).join('');
 }
 
+// ============== HISTÓRICO DE PESSOAS ==============
+let pessoaSearchTimer = null;
+
+function onPessoaSearchInput() {
+  clearTimeout(pessoaSearchTimer);
+  const q = (document.getElementById('pessoaSearchInput')?.value || '').trim();
+  document.getElementById('pessoaDetail').style.display = 'none';
+  if (q.length < 2) {
+    document.getElementById('pessoaSearchResults').innerHTML = '';
+    return;
+  }
+  pessoaSearchTimer = setTimeout(() => searchPessoas(q), 350);
+}
+
+async function searchPessoas(query) {
+  const rows = await api(`/api/pessoas?q=${encodeURIComponent(query)}`);
+  if (!rows) return;
+  const cont = document.getElementById('pessoaSearchResults');
+  if (!rows.length) {
+    cont.innerHTML = `
+      <div class="section">
+        <div class="empty-state" style="padding:30px 0">
+          <div class="ico">🔍</div>
+          <p>Nenhuma pessoa encontrada para "<strong>${escapeHtml(query)}</strong>"</p>
+          <p style="font-size:12px; margin-top:6px; color:var(--muted)">Pessoas são criadas automaticamente ao adicionar convidados às listas.</p>
+        </div>
+      </div>`;
+    return;
+  }
+  cont.innerHTML = `
+    <div class="section">
+      <div class="section-title" style="margin-bottom:14px;">${rows.length} pessoa${rows.length === 1 ? '' : 's'} encontrada${rows.length === 1 ? '' : 's'}</div>
+      ${rows.map(p => {
+        const taxa = p.total_vezes ? Math.round(p.total_idas * 100 / p.total_vezes) : 0;
+        const cls  = taxa >= 50 ? 'success' : taxa >= 30 ? 'warn' : 'danger';
+        return `
+          <div class="holder-card" style="cursor:pointer;" onclick="openPessoaDetail(${p.id})">
+            <div class="holder-avatar">${avatarFor(p.nome)}</div>
+            <div class="holder-info">
+              <div class="holder-name">${escapeHtml(p.nome)} <span class="mini-badge ${cls}">${taxa}%</span></div>
+              <div class="holder-meta">
+                ${p.total_vezes} lista${p.total_vezes === 1 ? '' : 's'} ·
+                ${p.total_idas} ida${p.total_idas === 1 ? '' : 's'} ·
+                ${p.total_faltas} falta${p.total_faltas === 1 ? '' : 's'}
+                ${p.ultima_lista ? ` · Última: ${formatDateBR(p.ultima_lista)}` : ''}
+              </div>
+              <div class="holder-meta" style="margin-top:2px;">
+                ${escapeHtml(p.instagram || '')}${p.instagram && p.telefone ? ' · ' : ''}${escapeHtml(p.telefone || '')}${p.cpf ? ` · CPF: ${escapeHtml(p.cpf)}` : ''}
+              </div>
+            </div>
+            <button class="btn ghost small">Ver histórico</button>
+          </div>
+        `;
+      }).join('')}
+    </div>`;
+}
+
+async function openPessoaDetail(pessoaId) {
+  document.getElementById('pessoaDetail').style.display = 'none';
+  const data = await api(`/api/pessoas/${pessoaId}/historico`);
+  if (!data) return;
+  const { pessoa, historico, stats } = data;
+  const taxa = stats.total_vezes ? Math.round(stats.total_idas * 100 / stats.total_vezes) : 0;
+  const taxaCls = taxa >= 50 ? 'success' : taxa >= 30 ? 'warning' : 'danger';
+
+  // Card com dados da pessoa + stats
+  document.getElementById('pessoaCard').innerHTML = `
+    <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-bottom:18px;">
+      <div class="holder-avatar" style="width:56px;height:56px;font-size:22px;">${avatarFor(pessoa.nome)}</div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:20px; font-weight:700;">${escapeHtml(pessoa.nome)}</div>
+        <div style="font-size:13px; color:var(--muted); margin-top:4px;">
+          ${[pessoa.instagram, pessoa.telefone, pessoa.cpf ? `CPF: ${pessoa.cpf}` : ''].filter(Boolean).join(' · ') || 'Sem dados de contato'}
+        </div>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat-box"><div class="stat-number">${stats.total_vezes}</div><div class="stat-label">Vezes convidada</div></div>
+      <div class="stat-box"><div class="stat-number success">${stats.total_idas}</div><div class="stat-label">Vezes que foi</div></div>
+      <div class="stat-box"><div class="stat-number danger">${stats.total_faltas}</div><div class="stat-label">Faltas</div></div>
+      <div class="stat-box"><div class="stat-number ${taxaCls}">${taxa}%</div><div class="stat-label">Taxa de presença</div></div>
+    </div>
+  `;
+
+  // Histórico de listas
+  const histCont = document.getElementById('pessoaHistorico');
+  if (!historico.length) {
+    histCont.innerHTML = `<div class="empty-state" style="padding:20px"><p>Nenhum histórico ainda.</p></div>`;
+  } else {
+    histCont.innerHTML = historico.map(h => {
+      const listOwner = h.holder_nome || h.aniversariante_nome || h.convidado_nome || 'Lista';
+      const tipoLabel = { holder: 'Holder', aniversariante: 'Aniversariante', convidado: 'Convidado' }[h.tipo] || h.tipo;
+      return `
+        <div class="holder-card">
+          <div class="holder-avatar" style="width:38px;height:38px;font-size:14px;background:${h.chegou ? 'var(--success)' : 'rgba(0,0,0,0.12)'}; color:${h.chegou ? '#fff' : 'var(--ink-2)'};">
+            ${h.chegou ? '✓' : '✗'}
+          </div>
+          <div class="holder-info">
+            <div class="holder-name">
+              ${formatDateBR(h.data)}
+              <span class="lista-pill" style="margin-left:6px;">${tipoLabel}</span>
+            </div>
+            <div class="holder-meta">
+              ${escapeHtml(listOwner)}
+              ${h.quem_convida ? ` · convidada por ${escapeHtml(h.quem_convida)}` : ''}
+            </div>
+          </div>
+          <div style="flex-shrink:0;">
+            <span class="mini-badge ${h.chegou ? 'success' : 'danger'}">${h.chegou ? 'Presente' : 'Faltou'}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  document.getElementById('pessoaSearchResults').innerHTML = '';
+  document.getElementById('pessoaDetail').style.display = '';
+  document.getElementById('pessoaDetail').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 // ============== PDF SEMANAL ==============
 async function generatePDF() {
   if (analiseMode !== 'semana' && !weekStart) weekStart = startOfWeek(new Date());

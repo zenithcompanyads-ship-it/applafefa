@@ -553,6 +553,10 @@
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg></span>
           <span>Restritas</span>
         </button></li>
+        <li class="nav-item"><button class="nav-link" data-tab="historico" onclick="changeTab(this, 'historico')">
+          <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span>
+          <span>Histórico</span>
+        </button></li>
         <li class="nav-item"><button class="nav-link" data-tab="analise" onclick="changeTab(this, 'analise')">
           <span class="nav-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="20" x2="4" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="20" y1="20" x2="20" y2="14"/></svg></span>
           <span>Análise</span>
@@ -661,6 +665,28 @@
             <button class="btn" onclick="openAddRestritaModal()">+ Adicionar Pessoa</button>
           </div>
           <div id="restritasList"></div>
+        </div>
+      </div>
+
+      <!-- HISTÓRICO DE PESSOAS -->
+      <div id="historico" class="tab-content">
+        <div class="section">
+          <h2 class="section-title">Histórico de Pessoas</h2>
+          <p class="section-subtitle">Busque qualquer pessoa pelo nome e veja o histórico completo de presença.</p>
+          <div class="search-wrap" style="max-width:100%; margin-bottom:0;">
+            <svg class="search-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="pessoaSearchInput" placeholder="Digite nome ou sobrenome..." oninput="onPessoaSearchInput()" autocomplete="off" style="font-size:15px; padding:14px 14px 14px 42px;">
+          </div>
+        </div>
+
+        <div id="pessoaSearchResults"></div>
+
+        <div id="pessoaDetail" style="display:none;">
+          <div class="section" id="pessoaCard"></div>
+          <div class="section">
+            <h2 class="section-title">Histórico de listas</h2>
+            <div id="pessoaHistorico"></div>
+          </div>
         </div>
       </div>
 

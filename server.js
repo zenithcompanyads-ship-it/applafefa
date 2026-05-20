@@ -324,6 +324,112 @@ app.post('/api/listas/:id/token', checkAuth, wrap(async (req, res) => {
   res.json({ token });
 }));
 
+// =================== PESSOAS (mestre) ===================
+
+// Upsert a pessoa record and return its id.
+// Match priority: CPF (digits only) → normalized name.
+async function upsertPessoa(nome, instagram, telefone, cpf) {
+  const nomeTrim = String(nome || '').trim();
+  if (!nomeTrim) return null;
+  const ig  = instagram || '';
+  const tel = telefone  || '';
+  const cpfRaw = (cpf || '').replace(/\D/g, '');
+
+  // 1. Try CPF match
+  if (cpfRaw.length === 11) {
+    const existing = await qOne(
+      `SELECT id FROM pessoas WHERE REGEXP_REPLACE(cpf, '[^0-9]', '', 'g') = $1`,
+      [cpfRaw]
+    );
+    if (existing) {
+      await q(
+        `UPDATE pessoas SET
+           instagram = CASE WHEN $1 <> '' THEN $1 ELSE instagram END,
+           telefone  = CASE WHEN $2 <> '' THEN $2 ELSE telefone  END,
+           nome      = CASE WHEN LOWER(TRIM(nome)) <> LOWER(TRIM($3)) THEN nome ELSE $3 END
+         WHERE id = $4`,
+        [ig, tel, nomeTrim, existing.id]
+      );
+      return existing.id;
+    }
+  }
+
+  // 2. Try name match
+  const byName = await qOne(
+    `SELECT id FROM pessoas WHERE LOWER(TRIM(nome)) = LOWER(TRIM($1))`,
+    [nomeTrim]
+  );
+  if (byName) {
+    await q(
+      `UPDATE pessoas SET
+         instagram = CASE WHEN $1 <> '' THEN $1 ELSE instagram END,
+         telefone  = CASE WHEN $2 <> '' THEN $2 ELSE telefone  END,
+         cpf       = CASE WHEN cpf = '' AND $3 <> '' THEN $3 ELSE cpf END
+       WHERE id = $4`,
+      [ig, tel, cpf || '', byName.id]
+    );
+    return byName.id;
+  }
+
+  // 3. Create new
+  const created = await qOne(
+    `INSERT INTO pessoas (nome, instagram, telefone, cpf)
+     VALUES ($1, $2, $3, $4) RETURNING id`,
+    [nomeTrim, ig, tel, cpf || '']
+  );
+  return created.id;
+}
+
+app.get('/api/pessoas', checkAuth, wrap(async (req, res) => {
+  const query = (req.query.q || '').trim();
+  if (query.length < 2) return res.json([]);
+  const rows = await qAll(`
+    SELECT
+      p.*,
+      COUNT(c.id)::int                                                     AS total_vezes,
+      COALESCE(SUM(CASE WHEN c.chegou THEN 1 ELSE 0 END), 0)::int          AS total_idas,
+      COALESCE(SUM(CASE WHEN NOT c.chegou THEN 1 ELSE 0 END), 0)::int      AS total_faltas,
+      MAX(l.data)                                                           AS ultima_lista
+    FROM pessoas p
+    LEFT JOIN convidados c ON c.pessoa_id = p.id
+    LEFT JOIN listas l ON c.lista_id = l.id
+    WHERE LOWER(p.nome) LIKE $1
+    GROUP BY p.id
+    ORDER BY total_vezes DESC, p.nome
+    LIMIT 40
+  `, [`%${query.toLowerCase()}%`]);
+  res.json(rows);
+}));
+
+app.get('/api/pessoas/:id/historico', checkAuth, wrap(async (req, res) => {
+  const pessoa = await qOne('SELECT * FROM pessoas WHERE id = $1', [req.params.id]);
+  if (!pessoa) return res.status(404).json({ error: 'Pessoa não encontrada' });
+
+  const historico = await qAll(`
+    SELECT
+      c.id AS convidado_id, c.chegou, c.quem_convida, c.added_at,
+      l.id AS lista_id, l.data, l.tipo, l.status, l.capacidade,
+      h.name  AS holder_nome,
+      a.nome  AS aniversariante_nome,
+      cf.nome AS convidado_nome
+    FROM convidados c
+    JOIN listas l ON c.lista_id = l.id
+    LEFT JOIN holders h ON l.holder_id = h.id
+    LEFT JOIN aniversariantes a ON l.aniversariante_id = a.id
+    LEFT JOIN convidados_frequentes cf ON l.convidado_id = cf.id
+    WHERE c.pessoa_id = $1
+    ORDER BY l.data DESC
+  `, [req.params.id]);
+
+  const stats = {
+    total_vezes: historico.length,
+    total_idas:  historico.filter(r => r.chegou).length,
+    total_faltas: historico.filter(r => !r.chegou).length,
+  };
+
+  res.json({ pessoa, historico, stats });
+}));
+
 // =================== BUSCA GLOBAL ===================
 app.get('/api/busca', checkAuth, wrap(async (req, res) => {
   const query = (req.query.q || '').trim();
@@ -400,10 +506,11 @@ app.post('/api/convite/:token/convidados', wrap(async (req, res) => {
     return res.status(400).json({ error: 'Nome é obrigatório.' });
   }
 
+  const pessoaId = await upsertPessoa(String(nome).trim(), instagram, telefone, '');
   const row = await qOne(
-    `INSERT INTO convidados (lista_id, nome, instagram, telefone)
-     VALUES ($1, $2, $3, $4) RETURNING *`,
-    [lista.id, String(nome).trim(), instagram || '', telefone || '']
+    `INSERT INTO convidados (lista_id, nome, instagram, telefone, pessoa_id)
+     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+    [lista.id, String(nome).trim(), instagram || '', telefone || '', pessoaId]
   );
 
   // Auto-mark as lotada when full
@@ -435,10 +542,11 @@ app.get('/api/listas/:id/convidados', checkAuth, wrap(async (req, res) => {
 
 app.post('/api/listas/:id/convidados', checkAuth, wrap(async (req, res) => {
   const { nome, instagram, telefone, quem_convida, cpf } = req.body;
+  const pessoaId = await upsertPessoa(nome, instagram, telefone, cpf);
   const row = await qOne(
-    `INSERT INTO convidados (lista_id, nome, instagram, telefone, quem_convida, cpf)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-    [req.params.id, nome, instagram || '', telefone || '', quem_convida || '', cpf || '']
+    `INSERT INTO convidados (lista_id, nome, instagram, telefone, quem_convida, cpf, pessoa_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+    [req.params.id, nome, instagram || '', telefone || '', quem_convida || '', cpf || '', pessoaId]
   );
   res.json(row);
 }));
@@ -451,22 +559,18 @@ app.post('/api/listas/:id/convidados/bulk', checkAuth, wrap(async (req, res) => 
     return res.status(400).json({ error: 'items vazio' });
   }
   let inserted = 0;
-  // single multi-row insert for efficiency
-  const values = [];
-  const placeholders = [];
-  let i = 1;
   for (const it of items) {
     const nome = (it.nome || '').trim();
     if (!nome) continue;
-    placeholders.push(`($${i++}, $${i++}, $${i++}, $${i++}, $${i++})`);
-    values.push(listaId, nome, it.instagram || '', it.telefone || '', it.quem_convida || quem_convida || '');
+    const pessoaId = await upsertPessoa(nome, it.instagram, it.telefone, it.cpf);
+    await q(
+      `INSERT INTO convidados (lista_id, nome, instagram, telefone, quem_convida, cpf, pessoa_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [listaId, nome, it.instagram || '', it.telefone || '', it.quem_convida || quem_convida || '', it.cpf || '', pessoaId]
+    );
     inserted++;
   }
   if (inserted === 0) return res.json({ inserted: 0 });
-  await q(
-    `INSERT INTO convidados (lista_id, nome, instagram, telefone, quem_convida) VALUES ${placeholders.join(', ')}`,
-    values
-  );
   res.json({ inserted });
 }));
 
@@ -478,6 +582,24 @@ app.put('/api/convidados/:id/presenca', checkAuth, wrap(async (req, res) => {
 
 app.put('/api/convidados/:id', checkAuth, wrap(async (req, res) => {
   const { nome, instagram, telefone, quem_convida, cpf } = req.body;
+  // Get current convidado to know if pessoa_id exists
+  const current = await qOne('SELECT pessoa_id FROM convidados WHERE id = $1', [req.params.id]);
+  if (current?.pessoa_id) {
+    // Update pessoa master record with latest info
+    await q(
+      `UPDATE pessoas SET
+         nome      = $1,
+         instagram = CASE WHEN $2 <> '' THEN $2 ELSE instagram END,
+         telefone  = CASE WHEN $3 <> '' THEN $3 ELSE telefone  END,
+         cpf       = CASE WHEN $4 <> '' THEN $4 ELSE cpf       END
+       WHERE id = $5`,
+      [nome, instagram || '', telefone || '', cpf || '', current.pessoa_id]
+    );
+  } else {
+    // No pessoa_id yet: upsert and link
+    const pessoaId = await upsertPessoa(nome, instagram, telefone, cpf);
+    await q('UPDATE convidados SET pessoa_id = $1 WHERE id = $2', [pessoaId, req.params.id]);
+  }
   await q(
     'UPDATE convidados SET nome = $1, instagram = $2, telefone = $3, quem_convida = $4, cpf = $5 WHERE id = $6',
     [nome, instagram || '', telefone || '', quem_convida || '', cpf || '', req.params.id]
